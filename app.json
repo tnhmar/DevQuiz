@@ -1,0 +1,20 @@
+{
+  "expo": {
+    "name": "DevQuiz",
+    "slug": "devquiz",
+    "scheme": "devquiz",
+    "version": "0.1.0",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "bundleIdentifier": "com.tnhmar.devquiz",
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "com.tnhmar.devquiz"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-sqlite"
+    ]
+  }
+}
