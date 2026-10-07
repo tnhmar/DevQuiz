@@ -4,6 +4,7 @@
     "slug": "devquiz",
     "scheme": "devquiz",
     "version": "0.1.0",
+    "orientation": "default",
     "userInterfaceStyle": "automatic",
     "ios": {
       "bundleIdentifier": "com.tnhmar.devquiz",
