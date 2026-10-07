@@ -13,12 +13,15 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test src/core/assessment.test.ts"
+    "test": "node --experimental-strip-types --test src/core/assessment.test.ts scripts/content-envelope.test.mjs",
+    "test:content": "node --test scripts/content-envelope.test.mjs",
+    "validate:content-envelope": "node scripts/validate-content-envelope.mjs"
   },
   "dependencies": {
     "expo": "57.0.27",
     "react": "19.2.3",
-    "react-native": "0.86.0"
+    "react-native": "0.86.0",
+    "ajv": "8.17.1"
   },
   "devDependencies": {
     "typescript": "5.9.2",
