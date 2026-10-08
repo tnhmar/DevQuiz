@@ -1,10 +1,78 @@
-name: DevQuiz foundation checks
-on: [push, pull_request, workflow_dispatch]
+name: DevQuiz manual maintenance
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Choose bulk cleanup or manually run app checks
+        type: choice
+        required: true
+        default: cleanup
+        options:
+          - cleanup
+          - app_checks
+      confirm_cleanup:
+        description: Confirm deletion of the explicitly listed content-pipeline artifacts
+        type: boolean
+        required: true
+        default: false
+
 permissions:
   contents: read
+
+concurrency:
+  group: devquiz-manual-maintenance
+  cancel-in-progress: false
+
 jobs:
-  check:
+  cleanup:
+    name: Delete requested pipeline artifacts in one commit
+    if: ${{ inputs.operation == 'cleanup' && inputs.confirm_cleanup && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: true
+      - name: Remove only requested paths and push one cleanup commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm --ignore-unmatch -- \
+            docs/CONTENT_PIPELINE.md \
+            docs/CP02_TYPED_SCHEMAS.md \
+            docs/CP02B_QUESTION_CONTRACTS.md \
+            docs/CP02C1_LEARNING_ENTITIES.md \
+            docs/CP02C2_PROVENANCE_CONTRACTS.md \
+            docs/CP02C3_EXAM_CONTRACTS.md \
+            fixtures/content/envelope-draft.en.json \
+            fixtures/content/envelope-invalid-cases.json \
+            src/content/block-validator.mjs \
+            src/content/envelope-validator.mjs \
+            src/content/exam-entity-validator.mjs \
+            src/content/learning-entity-validator.mjs \
+            src/content/provenance-validator.mjs \
+            src/content/question-validator.mjs \
+            scripts/content-envelope.test.mjs \
+            scripts/exam-entities.test.mjs \
+            scripts/learning-entities.test.mjs \
+            scripts/lesson-blocks.test.mjs \
+            scripts/provenance-entities.test.mjs \
+            scripts/questions.test.mjs \
+            scripts/validate-content-envelope.mjs
+          git -c core.hooksPath=/dev/null commit -m 'chore: pause content pipeline execution artifacts'
+          git -c core.hooksPath=/dev/null push origin HEAD:main
+
+  app_checks:
+    name: App checks only when explicitly requested
+    if: ${{ inputs.operation == 'app_checks' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
