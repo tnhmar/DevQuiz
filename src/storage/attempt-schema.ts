@@ -1,5 +1,5 @@
 export const ATTEMPT_DATABASE_NAME = 'devquiz-attempts.db';
-export const ATTEMPT_SCHEMA_VERSION = 1;
+export const ATTEMPT_SCHEMA_VERSION = 2;
 export const ATTEMPT_SCHEMA_V1 = `
 CREATE TABLE attempt_records (
   record_id TEXT PRIMARY KEY NOT NULL CHECK(length(trim(record_id)) BETWEEN 1 AND 128),
@@ -36,4 +36,20 @@ WHEN EXISTS (
   SELECT RAISE(ABORT, 'Existing attempts cannot be replaced');
 END;
 PRAGMA user_version = 1;
+`;
+export const ATTEMPT_SCHEMA_V2 = `
+CREATE TABLE session_checkpoints (
+  session_id TEXT PRIMARY KEY NOT NULL CHECK(length(trim(session_id)) > 0),
+  kind TEXT NOT NULL CHECK(kind IN ('choice', 'open')),
+  revision INTEGER NOT NULL CHECK(revision >= 1),
+  fixture INTEGER NOT NULL CHECK(fixture IN (0, 1)),
+  status TEXT NOT NULL CHECK(status IN ('active', 'completed')),
+  updated_at REAL NOT NULL CHECK(updated_at >= 0),
+  pending_count INTEGER NOT NULL CHECK(pending_count >= 0),
+  discarded INTEGER NOT NULL DEFAULT 0 CHECK(discarded IN (0, 1)),
+  checkpoint_json TEXT NOT NULL CHECK(json_valid(checkpoint_json))
+);
+CREATE INDEX session_checkpoints_resume ON session_checkpoints(discarded, status, updated_at, session_id);
+CREATE INDEX session_checkpoints_pending ON session_checkpoints(pending_count, updated_at, session_id);
+PRAGMA user_version = 2;
 `;

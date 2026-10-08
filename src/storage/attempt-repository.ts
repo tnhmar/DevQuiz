@@ -2,9 +2,11 @@ import { Platform } from 'react-native';
 import { openDatabaseAsync } from 'expo-sqlite';
 import type { SQLiteDatabase } from 'expo-sqlite';
 import type { AttemptRecord } from './attempt-records.ts';
-import { ATTEMPT_DATABASE_NAME, ATTEMPT_SCHEMA_VERSION, ATTEMPT_SCHEMA_V1 } from './attempt-schema.ts';
+import { ATTEMPT_DATABASE_NAME, ATTEMPT_SCHEMA_VERSION, ATTEMPT_SCHEMA_V1, ATTEMPT_SCHEMA_V2 } from './attempt-schema.ts';
+import { attachCheckpointRepository } from './checkpoint-repository.ts';
+import type { CheckpointRepository } from './checkpoint-repository.ts';
 export type AttemptSaveResult = Readonly<{ status: 'saved' | 'already_saved'; recordId: string }>;
-export type AttemptRepository = Readonly<{
+export type AttemptRepository = CheckpointRepository & Readonly<{
   append: (record: AttemptRecord) => Promise<AttemptSaveResult>;
   findById: (recordId: string) => Promise<AttemptRecord | null>;
   listSession: (sessionId: string, limit?: number, offset?: number) => Promise<readonly AttemptRecord[]>;
@@ -39,7 +41,9 @@ async function migrate(db: SQLiteDatabase) {
   await db.withExclusiveTransactionAsync(async transaction => {
     const version = await transaction.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
     if (!version || !Number.isInteger(version.user_version) || version.user_version < 0 || version.user_version > ATTEMPT_SCHEMA_VERSION) throw new Error('Unsupported attempt database version');
-    if (version.user_version === 0) await transaction.execAsync(ATTEMPT_SCHEMA_V1);
+    let current = version.user_version;
+    if (current === 0) { await transaction.execAsync(ATTEMPT_SCHEMA_V1); current = 1; }
+    if (current === 1) await transaction.execAsync(ATTEMPT_SCHEMA_V2);
   });
 }
 function repository(db: SQLiteDatabase): AttemptRepository {
@@ -50,6 +54,7 @@ function repository(db: SQLiteDatabase): AttemptRepository {
     return task;
   }
   return Object.freeze({
+    ...attachCheckpointRepository(db, queued, encode),
     append(record: AttemptRecord): Promise<AttemptSaveResult> {
       let recordJson: string;
       try { recordJson = encode(record); } catch (error) { return Promise.reject(error); }
