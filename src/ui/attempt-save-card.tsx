@@ -2,10 +2,11 @@ import { useSyncExternalStore } from 'react';
 import { Button, Text } from 'react-native';
 import type { AttemptSaveController } from '../storage/attempt-save.ts';
 import { Card, Copy, usePalette } from './shell.tsx';
-export function AttemptSaveCard({ controller }: { controller: AttemptSaveController }) {
+export function AttemptSaveCard({ controller, label }: { controller: AttemptSaveController; label?: string }) {
   const colors = usePalette();
   const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   return <Card title={snapshot.fixture ? 'Local fixture-history save' : 'Local attempt-history save'}>
+    {label && <Copy>{label}</Copy>}
     <Text accessibilityLiveRegion="polite" style={{ color: colors.text, fontSize: 17, lineHeight: 26 }}>{snapshot.message}</Text>
     <Copy>Method: {snapshot.objective ? 'objective choice scoring' : 'subjective open self-assessment'} / status: {snapshot.status}.</Copy>
     {snapshot.fixture && <Copy>Demo fixture / excluded from learning progress and readiness even when saved.</Copy>}
