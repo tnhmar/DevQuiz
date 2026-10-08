@@ -4,8 +4,10 @@ import { Button, Pressable, Text, View } from 'react-native';
 import { Card, Copy, EmptyState, Grid, Page, usePalette } from '../../src/ui/shell.tsx';
 import { ContentRenderer } from '../../src/ui/content-renderer.tsx';
 import { PracticeSetup } from '../../src/ui/practice-setup.tsx';
+import { PracticeSignalsCard } from '../../src/ui/practice-signals.tsx';
 import { DEMO_NOTICE, explanationText } from '../../src/demo/catalogue.ts';
 import { createDemoPracticePool } from '../../src/demo/practice-pool.ts';
+import { demoPracticeHints } from '../../src/demo/practice-hints.ts';
 import type { Explanation } from '../../src/content/questions.ts';
 import { createPracticeSession, currentPracticeQuestion, practiceSummary, reducePracticeSession } from '../../src/core/practice-session.ts';
 import type { PracticeAction, PracticeSession } from '../../src/core/practice-session.ts';
@@ -36,7 +38,7 @@ export default function Practice() {
   const activeId = useRef<string | null>(null);
   function begin(selection: PracticeSelection) {
     if (activeId.current !== null || !bank.data || !selection.selected) throw new Error('Session cannot be started');
-    const session = createPracticeSession({ sessionId: nextSessionId(), content: bank.data.content, fixture: true, questions: selection.questions });
+    const session = createPracticeSession({ sessionId: nextSessionId(), content: bank.data.content, fixture: true, questions: selection.questions, hintsByQuestion: demoPracticeHints(selection.questions) });
     activeId.current = session.sessionId;
     setLastRequest({ filters: selection.filters, count: selection.requested, order: selection.order, seed: selection.seed ?? 0 });
     setActive({ session, selection });
@@ -84,7 +86,8 @@ function ChoicePractice({ initialSession, selection, onSetup }: { initialSession
       <Copy>{DEMO_NOTICE}</Copy>{navigation}
       <Copy>{summary.correct} / {summary.answered} answers matched the requested options.</Copy>
       <Copy>{summary.answered} / {summary.totalQuestions} questions completed; {selection.requested} originally requested.</Copy>
-      <Copy>Nothing was saved to progress, review history or exam readiness.</Copy>
+      <Copy>{summary.assisted} assisted responses / {summary.repeatedCommits} repeated commits in this local restart history.</Copy>
+      <Copy>The total includes assisted answers and is not an unassisted mastery score. Nothing was saved to progress, review history or exam readiness.</Copy>
       <Button title="Retry same selection" onPress={() => restart(session.sessionId)} />
     </Page>;
   }
@@ -96,9 +99,12 @@ function ChoicePractice({ initialSession, selection, onSetup }: { initialSession
   const identity = { questionId: question.id, questionRevision: question.revision };
   const submitted = session.phase === 'feedback';
   const answer = submitted ? session.answers[session.index] : undefined;
-  return <Page title="Demo practice" subtitle="Select, submit, read feedback and continue. No answers are persisted.">
+  const repeated = session.previouslyCommittedIds.includes(question.id);
+  const previouslyMissed = session.previouslyMissedIds.includes(question.id);
+  return <Page title="Demo practice" subtitle="Choose optional confidence, use help if needed, submit and read feedback. No answers are persisted.">
     <Copy>{DEMO_NOTICE}</Copy>{navigation}
     <Copy>{selection.selected} selected / {selection.requested} requested / {selection.order === 'shuffle' ? 'shuffled question order' : 'source question order'}.</Copy>
+    <Copy>{repeated ? 'Repeated question in this local restart history.' : 'No previous committed answer in this local restart history.'}{previouslyMissed ? ' Previously missed in this history.' : ''}</Copy>
     <Grid>
       <Card title={'Question ' + (session.index + 1) + ' of ' + session.questions.length}>
         <Copy>{question.type === 'multi' ? 'Select all requested options' : 'Choose one option'} / {question.level}</Copy>
@@ -111,9 +117,12 @@ function ChoicePractice({ initialSession, selection, onSetup }: { initialSession
         })}</View>
         <Button title="Submit answer" disabled={!session.selectedOptionIds.length || submitted} onPress={() => transition({ type: 'submit', ...identity, at: Date.now() }, session.sessionId)} />
       </Card>
+      <PracticeSignalsCard session={session} onAction={action => transition(action, session.sessionId)} />
       <Card title="Feedback">
-        {!submitted ? <Copy>Submit an answer to reveal its explanation.</Copy> : !answer ? <><Copy>Feedback is unavailable. Restart the demo to continue.</Copy><Button title="Restart same selection" onPress={() => restart(session.sessionId)} /></> : <>
+        {!submitted ? <Copy>Submit an answer to reveal scored feedback. Revealing help first marks this attempt assisted.</Copy> : !answer ? <><Copy>Feedback is unavailable. Restart the demo to continue.</Copy><Button title="Restart same selection" onPress={() => restart(session.sessionId)} /></> : <>
           <Text accessibilityLiveRegion="polite" style={{ color: colors.text, fontSize: 20 }}>{answer.correct ? 'Correct' : 'Not the requested answer'}</Text>
+          <Copy>Captured confidence: {answer.confidence ?? 'Not provided'} / hint used: {answer.hintUsed ? 'yes' : 'no'} / answer revealed before submission: {answer.answerRevealed ? 'yes' : 'no'}.</Copy>
+          <Copy>{answer.firstCommitted ? 'First commit in this local selection history.' : 'Repeated commit in this local restart history.'}{answer.missedRetry ? ' Retry after an earlier miss in this history.' : ''}</Copy>
           <ExplanationView key={session.sessionId + ':' + question.id + ':feedback'} value={question.explanation} />
           <Button title={session.index + 1 === session.questions.length ? 'Finish demo' : 'Next question'} onPress={() => transition({ type: 'next', ...identity }, session.sessionId)} />
         </>}
