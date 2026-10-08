@@ -7,21 +7,18 @@ import { DEMO_NOTICE } from '../src/demo/catalogue.ts';
 import fixture from '../src/content/demo-open.en.json';
 import { canFinishOpenPractice, createOpenPractice, reduceOpenPractice } from '../src/core/open-practice.ts';
 import type { OpenPractice, OpenPracticeAction, OpenQuestion, RubricRating } from '../src/core/open-practice.ts';
+import type { PracticeConfidence } from '../src/core/practice-session.ts';
 type OpenView = { state: OpenPractice | null; error: string | null };
 const ratings: readonly RubricRating[] = [0, 1, 2];
+const confidenceOptions: readonly { value: PracticeConfidence | null; label: string }[] = [{ value: null, label: 'Not provided' }, { value: 'low', label: 'Low' }, { value: 'medium', label: 'Medium' }, { value: 'high', label: 'High' }];
 let serial = 0;
-function nextSessionId() {
-  serial += 1;
-  return 'demo.open:' + Date.now() + ':' + serial;
-}
+function nextSessionId() { serial += 1; return 'demo.open:' + Date.now() + ':' + serial; }
 function startDemo(): OpenView {
   try {
     const { packId, contentVersion, language } = fixture.content;
     if (fixture.fixture !== true || (language !== 'en' && language !== 'fr')) throw new Error('Unsupported local fixture');
     return { state: createOpenPractice({ sessionId: nextSessionId(), content: { packId, contentVersion, language }, fixture: true, question: fixture.question as unknown as OpenQuestion }), error: null };
-  } catch {
-    return { state: null, error: 'The open-response demo could not be started. No progress was saved.' };
-  }
+  } catch { return { state: null, error: 'The open-response demo could not be started. No progress was saved.' }; }
 }
 export default function OpenPracticeDemo() {
   const colors = usePalette();
@@ -32,12 +29,8 @@ export default function OpenPracticeDemo() {
   function transition(action: OpenPracticeAction) {
     const previous = live.current;
     if (!previous.state || (previous.error && action.type !== 'restart')) return;
-    try {
-      const state = reduceOpenPractice(previous.state, action);
-      if (state !== previous.state) show({ state, error: null });
-    } catch {
-      show({ state: previous.state, error: 'The demo could not continue. No progress was saved. Restart to try again.' });
-    }
+    try { const state = reduceOpenPractice(previous.state, action); if (state !== previous.state) show({ state, error: null }); }
+    catch { show({ state: previous.state, error: 'The demo could not continue. No progress was saved. Restart to try again.' }); }
   }
   function restart(expectedSessionId: string | null) {
     const state = live.current.state;
@@ -49,7 +42,7 @@ export default function OpenPracticeDemo() {
   const state = view.state;
   const identity = state ? { sessionId: state.sessionId, questionId: state.question.id, questionRevision: state.question.revision } : null;
   return <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-    <Page title="Open-response demo" subtitle="Write first, then compare and rate yourself. This is subjective practice only.">
+    <Page title="Open-response demo" subtitle="Write, choose optional confidence, then compare and rate yourself. Subjective practice only.">
       <Copy>{DEMO_NOTICE}</Copy>
       <Button title="Back to choice practice (discard this demo)" onPress={() => { Keyboard.dismiss(); router.replace('/(tabs)/practice'); }} />
       {view.error || !state || !identity ? <>
@@ -61,11 +54,19 @@ export default function OpenPracticeDemo() {
           {state.phase === 'writing' ? <>
             <TextInput accessibilityLabel="Your open response" multiline maxLength={100000} value={state.text} onChangeText={text => transition({ type: 'edit', ...identity, text })} placeholder="Write your own answer before revealing the model answer" placeholderTextColor={colors.muted} style={{ minHeight: 160, padding: 16, borderWidth: 1, borderColor: colors.border, borderRadius: 12, color: colors.text, backgroundColor: colors.background, fontSize: 17, lineHeight: 26, textAlignVertical: 'top' }} />
             <Copy>{state.text.length} / 100000 characters. Blank answers cannot be submitted.</Copy>
-            <Button title="Submit and reveal model answer" disabled={!state.text.trim()} onPress={() => { Keyboard.dismiss(); transition({ type: 'submit', ...identity, at: Date.now() }); }} />
           </> : <>
             <Copy>Submitted response / locked for this attempt</Copy>
             <Text selectable style={{ color: colors.text, fontSize: 17, lineHeight: 26 }}>{state.text}</Text>
           </>}
+          <Copy>Optional confidence before submission / no effect on rubric points</Copy>
+          <View style={{ gap: 8 }}>{confidenceOptions.map(option => {
+            const selected = state.confidence === option.value;
+            const locked = state.phase !== 'writing';
+            return <Pressable key={option.value ?? 'none'} accessibilityRole="radio" accessibilityLabel={'Open-response confidence: ' + option.label} accessibilityState={{ checked: selected, disabled: locked }} disabled={locked} onPress={() => transition({ type: 'confidence', ...identity, value: option.value, at: Date.now() })} style={{ minHeight: 48, padding: 12, borderWidth: 2, borderColor: selected ? colors.accent : colors.border, borderRadius: 12 }}>
+              <Text style={{ color: colors.text, fontSize: 17 }}>{selected ? 'Selected: ' : ''}{option.label}</Text>
+            </Pressable>;
+          })}</View>
+          {state.phase === 'writing' ? <Button title="Submit and reveal model answer" disabled={!state.text.trim()} onPress={() => { Keyboard.dismiss(); transition({ type: 'submit', ...identity, at: Date.now() }); }} /> : <Copy>Captured confidence: {state.submittedConfidence?.value ?? 'Not provided'} / locked before model-answer comparison.</Copy>}
         </Card>
         {state.phase === 'writing' ? <Copy>The model answer and rubric will appear after submission. Nothing is graded automatically.</Copy> : <>
           <Card title="Model answer">
@@ -88,10 +89,11 @@ export default function OpenPracticeDemo() {
         </>}
         {state.phase === 'finished' && state.result && <Card title="Temporary self-assessment result">
           <Text accessibilityLiveRegion="polite" style={{ color: colors.text, fontSize: 20 }}>Self-rated rubric: {state.result.subjectivePoints} / {state.result.maxSubjectivePoints}</Text>
+          <Copy>Confidence captured with the written answer: {state.result.confidence ?? 'Not provided'}.</Copy>
           {state.result.criticalRatings.map(item => <Copy key={item.criterionId}>Critical criterion: {state.question.rubric.find(criterion => criterion.id === item.criterionId)?.criterion ?? item.criterionId} / self-rating {item.rating} of 2</Copy>)}
-          <Copy>Not a correctness score, mastery percentage, interview-readiness result or exam pass. Nothing was saved.</Copy>
+          <Copy>Confidence is self-reported, not proof of correctness. This remains objective: false. Not mastery, interview readiness or an exam pass. Nothing was saved.</Copy>
         </Card>}
-        <Button title="Restart open demo (clear this answer)" onPress={() => restart(state.sessionId)} />
+        <Button title="Restart open demo (clear answer and confidence)" onPress={() => restart(state.sessionId)} />
       </>}
     </Page>
   </KeyboardAvoidingView>;
