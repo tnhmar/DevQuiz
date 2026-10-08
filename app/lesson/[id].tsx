@@ -13,7 +13,7 @@ export default function DemoLesson() {
     <Button title="Back to Learn" onPress={() => router.replace('/(tabs)/learn')} />
     {!lesson ? <EmptyState title="Unknown lesson" detail="This ID is not part of the bundled demo." /> : <>
       <Copy>Objective: {lesson.objective}</Copy>
-      <ContentRenderer blocks={lesson.body} />
+      <ContentRenderer key={lesson.id + ':' + lesson.revision} blocks={lesson.body} />
       <Action label="Try the two demo questions" href="/(tabs)/practice" />
     </>}
   </Page>;
