@@ -1,149 +1,32 @@
-import type { Explanation, Question } from '../content/questions.ts';
-import { scoreChoice } from './assessment.ts';
-import type { EvidenceContext } from './assessment.ts';
-export type ChoiceQuestion = Exclude<Question, { type: 'open' }>;
-export type ContentIdentity = Readonly<{ packId: string; contentVersion: string; language: 'en' | 'fr' }>;
-export type PracticeConfidence = 'low' | 'medium' | 'high';
-export type PracticeHint = Readonly<{ id: string; label: string; content: Explanation }>;
-export type HintExposure = Readonly<{ hintId: string; revealedAt: number }>;
-export type PracticeSignals = Readonly<{
-  confidence: PracticeConfidence | null; confidenceCapturedAt: number | null;
-  hints: readonly HintExposure[]; answerRevealedAt: number | null;
-}>;
-export type PracticeAnswer = Readonly<{
-  sessionId: string; questionId: string; questionRevision: number; questionFamilyId: string;
-  selectedOptionIds: readonly string[]; correct: boolean; points: number; maxPoints: number;
-  committedAt: number; fixture: boolean; scoringPolicy: 'choice-exact-v1';
-  objective: true; firstCommitted: boolean; missedRetry: boolean; retryOfSessionId: string | null;
-  hintUsed: boolean; hintExposures: readonly HintExposure[]; answerRevealed: boolean;
-  answerRevealedAt: number | null; confidence: PracticeConfidence | null; confidenceCapturedAt: number | null;
-}>;
-export type PracticeSession = Readonly<{
-  sessionId: string; content: ContentIdentity; fixture: boolean;
-  questions: readonly ChoiceQuestion[]; index: number; selectedOptionIds: readonly string[];
-  answers: readonly PracticeAnswer[]; phase: 'empty' | 'answering' | 'feedback' | 'finished';
-  hintsByQuestion: Readonly<Record<string, readonly PracticeHint[]>>; signals: PracticeSignals;
-  previouslyCommittedIds: readonly string[]; previouslyMissedIds: readonly string[]; retryOfSessionId: string | null;
-}>;
-type QuestionIdentity = { questionId: string; questionRevision: number };
-export type PracticeAction =
-  | (QuestionIdentity & { type: 'select'; optionId: string })
-  | (QuestionIdentity & { type: 'confidence'; value: PracticeConfidence | null; at: number })
-  | (QuestionIdentity & { type: 'hint'; hintId: string; at: number })
-  | (QuestionIdentity & { type: 'reveal_answer'; at: number })
-  | (QuestionIdentity & { type: 'submit'; at: number })
-  | (QuestionIdentity & { type: 'next' })
-  | { type: 'restart'; sessionId: string };
-function freshSignals(): PracticeSignals {
-  return { confidence: null, confidenceCapturedAt: null, hints: [], answerRevealedAt: null };
-}
-function validTime(at: number) {
-  if (!Number.isFinite(at) || at < 0) throw new Error('Invalid capture timestamp');
-}
-function grade(question: ChoiceQuestion, selected: readonly string[]) {
-  return scoreChoice({ type: question.type, options: question.options.map(option => option.id), correctOptionIds: question.scoring.correctOptionIds }, selected);
-}
-export function createPracticeSession(input: {
-  sessionId: string; content: ContentIdentity; fixture: boolean; questions: readonly Question[];
-  hintsByQuestion?: Readonly<Record<string, readonly PracticeHint[]>>;
-}): PracticeSession {
-  if (!input.sessionId.trim() || !input.content.packId.trim() || !input.content.contentVersion.trim()) throw new Error('Session and content identities are required');
-  if (typeof input.fixture !== 'boolean') throw new Error('Fixture context must be explicit');
-  const seen = new Set<string>();
-  const questions = input.questions.map(value => {
-    const question = JSON.parse(JSON.stringify(value)) as Question;
-    if (question.type === 'open') throw new Error('Open responses require the separate rubric session flow');
-    if (!question.id || seen.has(question.id) || !Number.isInteger(question.revision) || question.revision < 1) throw new Error('Invalid or duplicate question identity');
-    if (question.scoring.kind !== 'exact_match' || question.scoring.maxPoints !== 1 || question.scoring.negativeMarking !== false) throw new Error('Unsupported choice scoring policy');
-    seen.add(question.id); grade(question, []); return question;
-  });
-  const hintsByQuestion: Record<string, readonly PracticeHint[]> = Object.create(null);
-  for (const [questionId, values] of Object.entries(input.hintsByQuestion ?? {})) {
-    if (!seen.has(questionId) || values.length > 20) throw new Error('Invalid hint registry scope');
-    const hints = JSON.parse(JSON.stringify(values)) as PracticeHint[];
-    if (new Set(hints.map(hint => hint.id)).size !== hints.length || hints.some(hint => !hint.id.trim() || !hint.label.trim() || (typeof hint.content === 'string' ? !hint.content.trim() : !hint.content.length))) throw new Error('Invalid hint identities or content');
-    hintsByQuestion[questionId] = hints;
+
+// Add the following exported restore function adjacent to the engine's session constructors. Existing reducer/scoring paths remain unchanged.
+export function restorePracticeSession(session: PracticeSession, selection: PracticeSelection): PracticeSession {
+  const restored = JSON.parse(JSON.stringify(session)) as PracticeSession;
+  if (!restored.sessionId.trim() || !restored.content.packId.trim() || !restored.content.contentVersion.trim() || (restored.content.language !== 'en' && restored.content.language !== 'fr') || typeof restored.fixture !== 'boolean') throw new Error('Invalid restored choice identity');
+  const questionIds = new Set(restored.questions.map(question => question.id));
+  if (questionIds.size !== restored.questions.length || restored.questions.some(question => question.type === 'open' || !Number.isInteger(question.revision) || question.revision < 1 || question.scoring.kind !== 'exact_match' || question.scoring.maxPoints !== 1 || question.scoring.negativeMarking !== false)) throw new Error('Invalid restored choice questions');
+  if (!Number.isSafeInteger(restored.index) || restored.index < 0 || restored.index > restored.questions.length) throw new Error('Invalid restored choice index');
+  const answerCount = restored.answers.length;
+  if ((restored.phase === 'empty' && (restored.questions.length !== 0 || restored.index !== 0 || answerCount !== 0)) || (restored.phase !== 'empty' && restored.questions.length === 0) || (restored.phase === 'answering' && restored.index !== answerCount) || (restored.phase === 'feedback' && restored.index + 1 !== answerCount) || (restored.phase === 'finished' && (restored.index !== restored.questions.length || answerCount !== restored.questions.length))) throw new Error('Restored choice phase/index/answers disagree');
+  let priorTime = 0;
+  for (let i = 0; i < answerCount; i += 1) {
+    const answer = restored.answers[i]; const question = restored.questions[i];
+    if (answer.sessionId !== restored.sessionId || answer.questionId !== question.id || answer.questionRevision !== question.revision || answer.questionFamilyId !== question.questionFamilyId || answer.fixture !== restored.fixture || answer.objective !== true || answer.scoringPolicy !== 'choice-exact-v1' || !Number.isFinite(answer.committedAt) || answer.committedAt < priorTime) throw new Error('Restored choice answer identity/time mismatch');
+    priorTime = answer.committedAt;
+    const score = grade(question, answer.selectedOptionIds);
+    if (!answer.selectedOptionIds.length || new Set(answer.selectedOptionIds).size !== answer.selectedOptionIds.length || answer.selectedOptionIds.some(id => !question.options.some(option => option.id === id)) || score.correct !== answer.correct || score.points !== answer.points || score.maxPoints !== answer.maxPoints) throw new Error('Restored choice outcome mismatch');
+    if (answer.hintUsed !== (answer.hintExposures.length > 0) || answer.answerRevealed !== (answer.answerRevealedAt !== null) || ((answer.confidence === null) !== (answer.confidenceCapturedAt === null)) || answer.hintExposures.some(exposure => !restored.hintsByQuestion[question.id]?.some(hint => hint.id === exposure.hintId) || exposure.revealedAt > answer.committedAt) || (answer.answerRevealedAt !== null && answer.answerRevealedAt > answer.committedAt) || (answer.confidenceCapturedAt !== null && answer.confidenceCapturedAt > answer.committedAt)) throw new Error('Restored choice signal mismatch');
   }
-  return {
-    sessionId: input.sessionId, content: { ...input.content }, fixture: input.fixture,
-    questions, index: 0, selectedOptionIds: [], answers: [], phase: questions.length ? 'answering' : 'empty',
-    hintsByQuestion, signals: freshSignals(), previouslyCommittedIds: [], previouslyMissedIds: [], retryOfSessionId: null
-  };
-}
-export function currentPracticeQuestion(session: PracticeSession): ChoiceQuestion | undefined {
-  return session.phase === 'empty' || session.phase === 'finished' ? undefined : session.questions[session.index];
-}
-export function currentPracticeHints(session: PracticeSession): readonly PracticeHint[] {
-  const question = currentPracticeQuestion(session);
-  return question ? session.hintsByQuestion[question.id] ?? [] : [];
-}
-export function reducePracticeSession(session: PracticeSession, action: PracticeAction): PracticeSession {
-  if (action.type === 'restart') {
-    if (!action.sessionId.trim() || action.sessionId === session.sessionId) throw new Error('Restart requires a new session identity');
-    return {
-      ...session, sessionId: action.sessionId, index: 0, selectedOptionIds: [], answers: [], signals: freshSignals(),
-      phase: session.questions.length ? 'answering' : 'empty', retryOfSessionId: session.sessionId,
-      previouslyCommittedIds: [...new Set([...session.previouslyCommittedIds, ...session.answers.map(answer => answer.questionId)])],
-      previouslyMissedIds: [...new Set([...session.previouslyMissedIds, ...session.answers.filter(answer => !answer.correct).map(answer => answer.questionId)])]
-    };
-  }
-  const question = currentPracticeQuestion(session);
-  if (!question || question.id !== action.questionId || question.revision !== action.questionRevision) return session;
-  if (action.type === 'confidence') {
-    if (session.phase !== 'answering' || session.signals.hints.length || session.signals.answerRevealedAt !== null) return session;
-    if (action.value !== null && !['low', 'medium', 'high'].includes(action.value)) throw new Error('Invalid confidence value');
-    validTime(action.at);
-    return { ...session, signals: { ...session.signals, confidence: action.value, confidenceCapturedAt: action.value === null ? null : action.at } };
-  }
-  if (action.type === 'hint') {
-    if (session.phase !== 'answering' || !currentPracticeHints(session).some(hint => hint.id === action.hintId) || session.signals.hints.some(hint => hint.hintId === action.hintId)) return session;
-    validTime(action.at);
-    return { ...session, signals: { ...session.signals, hints: [...session.signals.hints, { hintId: action.hintId, revealedAt: action.at }] } };
-  }
-  if (action.type === 'reveal_answer') {
-    if (session.phase !== 'answering' || session.signals.answerRevealedAt !== null) return session;
-    validTime(action.at);
-    return { ...session, signals: { ...session.signals, answerRevealedAt: action.at } };
-  }
-  if (action.type === 'select') {
-    if (session.phase !== 'answering' || !question.options.some(option => option.id === action.optionId)) return session;
-    const selected = question.type === 'multi'
-      ? session.selectedOptionIds.includes(action.optionId) ? session.selectedOptionIds.filter(id => id !== action.optionId) : [...session.selectedOptionIds, action.optionId]
-      : [action.optionId];
-    return { ...session, selectedOptionIds: selected };
-  }
-  if (action.type === 'submit') {
-    if (session.phase !== 'answering' || !session.selectedOptionIds.length) return session;
-    validTime(action.at);
-    const captures = [session.signals.confidenceCapturedAt, session.signals.answerRevealedAt, ...session.signals.hints.map(hint => hint.revealedAt)].filter((at): at is number => at !== null);
-    if (captures.some(at => at > action.at)) throw new Error('Submission cannot precede its captured signals');
-    const score = grade(question, session.selectedOptionIds);
-    const answer: PracticeAnswer = {
-      sessionId: session.sessionId, questionId: question.id, questionRevision: question.revision,
-      questionFamilyId: question.questionFamilyId, selectedOptionIds: [...session.selectedOptionIds],
-      correct: score.correct, points: score.points, maxPoints: score.maxPoints,
-      committedAt: action.at, fixture: session.fixture, scoringPolicy: 'choice-exact-v1', objective: true,
-      firstCommitted: !session.previouslyCommittedIds.includes(question.id), missedRetry: session.previouslyMissedIds.includes(question.id),
-      retryOfSessionId: session.retryOfSessionId, hintUsed: session.signals.hints.length > 0,
-      hintExposures: session.signals.hints.map(hint => ({ ...hint })), answerRevealed: session.signals.answerRevealedAt !== null,
-      answerRevealedAt: session.signals.answerRevealedAt, confidence: session.signals.confidence, confidenceCapturedAt: session.signals.confidenceCapturedAt
-    };
-    return { ...session, answers: [...session.answers, answer], phase: 'feedback' };
-  }
-  if (session.phase !== 'feedback') return session;
-  const index = session.index + 1;
-  return { ...session, index, selectedOptionIds: [], signals: freshSignals(), phase: index >= session.questions.length ? 'finished' : 'answering' };
-}
-export function practiceAnswerEvidence(answer: PracticeAnswer): EvidenceContext {
-  return { fixture: answer.fixture, objective: answer.objective, firstCommitted: answer.firstCommitted, hintUsed: answer.hintUsed, answerRevealed: answer.answerRevealed, missedRetry: answer.missedRetry, at: answer.committedAt };
-}
-export function practiceSummary(session: PracticeSession) {
-  return {
-    totalQuestions: session.questions.length, answered: session.answers.length,
-    correct: session.answers.filter(answer => answer.correct).length,
-    points: session.answers.reduce((sum, answer) => sum + answer.points, 0),
-    assisted: session.answers.filter(answer => answer.hintUsed || answer.answerRevealed).length,
-    repeatedCommits: session.answers.filter(answer => !answer.firstCommitted).length,
-    complete: session.phase === 'finished', fixture: session.fixture
-  };
+  const current = restored.phase === 'answering' || restored.phase === 'feedback' ? restored.questions[restored.index] : null;
+  if (current) {
+    if (restored.selectedOptionIds.some(id => !current.options.some(option => option.id === id)) || new Set(restored.selectedOptionIds).size !== restored.selectedOptionIds.length) throw new Error('Restored selection contains an unknown/duplicate option');
+    if ((restored.signals.confidence === null) !== (restored.signals.confidenceCapturedAt === null) || restored.signals.hints.some(exposure => !restored.hintsByQuestion[current.id]?.some(hint => hint.id === exposure.hintId)) || new Set(restored.signals.hints.map(exposure => exposure.hintId)).size !== restored.signals.hints.length) throw new Error('Restored current signals mismatch');
+    if (restored.phase === 'feedback') {
+      const answer = restored.answers[restored.index];
+      if (!answer || JSON.stringify(restored.selectedOptionIds) !== JSON.stringify(answer.selectedOptionIds) || JSON.stringify(restored.signals) !== JSON.stringify({ confidence: answer.confidence, confidenceCapturedAt: answer.confidenceCapturedAt, hints: answer.hintExposures, answerRevealedAt: answer.answerRevealedAt })) throw new Error('Restored feedback differs from the locked answer');
+    }
+  } else if (restored.selectedOptionIds.length || restored.signals.confidence !== null || restored.signals.confidenceCapturedAt !== null || restored.signals.hints.length || restored.signals.answerRevealedAt !== null) throw new Error('Inactive restored choice state retained current signals');
+  if (new Set(restored.previouslyCommittedIds).size !== restored.previouslyCommittedIds.length || new Set(restored.previouslyMissedIds).size !== restored.previouslyMissedIds.length || restored.previouslyMissedIds.some(id => !restored.previouslyCommittedIds.includes(id)) || (restored.retryOfSessionId !== null && restored.retryOfSessionId === restored.sessionId)) throw new Error('Restored retry lineage mismatch');
+  if (selection.questions.length !== restored.questions.length || selection.selected !== restored.questions.length || selection.shortfall !== selection.requested - selection.selected || selection.questions.some((question, index) => question.id !== restored.questions[index].id || question.revision !== restored.questions[index].revision) || new Set(restored.questions.map(question => question.questionFamilyId)).size !== restored.questions.length) throw new Error('Restored selection differs from pinned questions');
+  return restored;
 }
